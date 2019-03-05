@@ -337,12 +337,14 @@ class ConsumerExample extends DocsSpecBase(KafkaPorts.ScalaConsumerExamples) {
         case TopicPartitionsAssigned(subscription, topicPartitions) =>
           log.info("Assigned: {}", topicPartitions)
           //#withRebalanceListenerActor
+          sender ! Done
           assignedPromise.success(Done)
     //#withRebalanceListenerActor
 
         case TopicPartitionsRevoked(subscription, topicPartitions) =>
           log.info("Revoked: {}", topicPartitions)
           //#withRebalanceListenerActor
+          sender ! Done
           revokedPromise.success(Done)
     //#withRebalanceListenerActor
       }
@@ -357,16 +359,19 @@ class ConsumerExample extends DocsSpecBase(KafkaPorts.ScalaConsumerExamples) {
     // use the subscription as usual:
     //#withRebalanceListenerActor
     // format: on
-    val (control, result) =
+    val (_, drainingControl, result) =
       //#withRebalanceListenerActor
       Consumer
         .plainSource(consumerSettings, subscription)
         //#withRebalanceListenerActor
         .toMat(Sink.seq)(Keep.both)
+        .mapMaterializedValue(
+          controlAndResult => (controlAndResult._1, DrainingControl(controlAndResult), controlAndResult._2)
+        )
         .run()
     awaitProduce(produce(topic, 1 to 10))
-    Await.result(control.shutdown(), 5.seconds)
-    result.futureValue should have size 10
+    Await.result(drainingControl.drainAndShutdown(), 5.seconds)
+    Await.result(result, 5.seconds) should have size 10
     assignedPromise.future.futureValue should be(Done)
     revokedPromise.future.futureValue should be(Done)
   }

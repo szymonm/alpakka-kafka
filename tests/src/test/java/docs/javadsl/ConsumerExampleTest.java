@@ -33,6 +33,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import scala.Unit;
 
 import java.time.Duration;
 import java.util.List;
@@ -428,11 +429,13 @@ class ConsumerExampleTest extends EmbeddedKafkaTest {
               TopicPartitionsAssigned.class,
               assigned -> {
                 log().info("Assigned: {}", assigned);
+                getSender().tell(Done.done(), getSelf());
               })
           .match(
               TopicPartitionsRevoked.class,
               revoked -> {
                 log().info("Revoked: {}", revoked);
+                getSender().tell(Done.done(), getSelf());
               })
           .build();
     }
