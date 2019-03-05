@@ -9,10 +9,12 @@ import akka.actor.{ActorRef, ExtendedActorSystem, Terminated}
 import akka.annotation.InternalApi
 import akka.kafka.Subscriptions._
 import akka.kafka._
+import akka.pattern.ask
 import akka.stream.{ActorMaterializerHelper, SourceShape}
 import org.apache.kafka.common.TopicPartition
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.duration._
+import scala.concurrent.{Await, Future, Promise}
 
 /**
  * Internal API.
@@ -47,16 +49,24 @@ import scala.concurrent.{Future, Promise}
 
       KafkaConsumerActor.ListenerCallbacks(
         assignedTps => {
-          autoSubscription.rebalanceListener.foreach {
-            _.tell(TopicPartitionsAssigned(autoSubscription, assignedTps), sourceActor.ref)
+          autoSubscription.rebalanceListener.foreach { rebalanceListenerActor =>
+            val assignmentMessage = TopicPartitionsAssigned(autoSubscription, assignedTps)
+            val assignedCallbackFuture =
+              rebalanceListenerActor.ask(assignmentMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+
+            Await.result(assignedCallbackFuture, settings.rebalanceFlushTimeout)
           }
           if (assignedTps.nonEmpty) {
             partitionAssignedCB.invoke(assignedTps)
           }
         },
         revokedTps => {
-          autoSubscription.rebalanceListener.foreach {
-            _.tell(TopicPartitionsRevoked(autoSubscription, revokedTps), sourceActor.ref)
+          autoSubscription.rebalanceListener.foreach { rebalanceListenerActor =>
+            val revokeMessage = TopicPartitionsRevoked(autoSubscription, revokedTps)
+            val revokedCallbackFuture =
+              rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+
+            Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
           }
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)
