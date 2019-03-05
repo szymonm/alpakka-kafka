@@ -262,7 +262,6 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
       givenInitializedTopic(sourceTopic)
       givenInitializedTopic(sinkTopic)
 
-
       val elements = 100000
       val batchSize = 1000
       Await.result(produce(sourceTopic, 1 to elements), remainingOrDefault)
@@ -283,8 +282,8 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
         control
       }
 
-      val controls: Seq[Control] = (0 until elements / batchSize).map {
-        x => {
+      val controls: Seq[Control] = (0 until elements / batchSize).map { x =>
+        {
           Thread.sleep(100)
           runStream(x.toString)
         }
