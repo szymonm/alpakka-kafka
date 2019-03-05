@@ -70,6 +70,7 @@ object ConsumerSettings {
     val positionTimeout = config.getDuration("position-timeout").asScala
     val offsetForTimesTimeout = config.getDuration("offset-for-times-timeout").asScala
     val metadataRequestTimeout = config.getDuration("metadata-request-timeout").asScala
+    val rebalanceFlushTimeout = config.getDuration("rebalance-flush-timeout").asScala
     new ConsumerSettings[K, V](
       properties,
       keyDeserializer,
@@ -86,6 +87,7 @@ object ConsumerSettings {
       positionTimeout,
       offsetForTimesTimeout,
       metadataRequestTimeout,
+      rebalanceFlushTimeout,
       ConsumerSettings.createKafkaConsumer
     )
   }
@@ -196,6 +198,7 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
     val positionTimeout: FiniteDuration,
     val offsetForTimesTimeout: FiniteDuration,
     val metadataRequestTimeout: FiniteDuration,
+    val rebalanceFlushTimeout: FiniteDuration,
     val consumerFactory: ConsumerSettings[K, V] => Consumer[K, V]
 ) {
 
@@ -230,6 +233,7 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
     positionTimeout = 5.seconds,
     offsetForTimesTimeout = 5.seconds,
     metadataRequestTimeout = 5.seconds,
+    rebalanceFlushTimeout = 40.seconds,
     consumerFactory = ConsumerSettings.createKafkaConsumer
   )
 
@@ -330,6 +334,21 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
    */
   def withStopTimeout(stopTimeout: java.time.Duration): ConsumerSettings[K, V] =
     copy(stopTimeout = stopTimeout.asScala)
+
+  /**
+   * The timeout waiting for the transactional partitioned streams that close
+   * on every rebalance when revoking the partitions.
+   */
+  def withRebalanceFlushTimeout(rebalanceFlushTimeout: FiniteDuration): ConsumerSettings[K, V] =
+    copy(rebalanceFlushTimeout = rebalanceFlushTimeout)
+
+  /**
+   * Java API:
+   * The timeout waiting for the transactional partitioned streams that close
+   * on every rebalance when revoking the partitions.
+   */
+  def withRebalanceFlushTimeout(rebalanceFlushTimeout: java.time.Duration): ConsumerSettings[K, V] =
+    copy(rebalanceFlushTimeout = rebalanceFlushTimeout.asScala)
 
   /**
    * Set duration to wait for `KafkaConsumer.close` to finish.
@@ -490,6 +509,7 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
       pollInterval: FiniteDuration = pollInterval,
       pollTimeout: FiniteDuration = pollTimeout,
       stopTimeout: FiniteDuration = stopTimeout,
+      rebalanceFlushTimeout: FiniteDuration = rebalanceFlushTimeout,
       closeTimeout: FiniteDuration = closeTimeout,
       commitTimeout: FiniteDuration = commitTimeout,
       commitTimeWarning: FiniteDuration = commitTimeWarning,
@@ -517,6 +537,7 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
       positionTimeout,
       offsetForTimesTimeout,
       metadataRequestTimeout,
+      rebalanceFlushTimeout,
       consumerFactory
     )
 
@@ -539,6 +560,7 @@ class ConsumerSettings[K, V] @InternalApi private[kafka] (
     s"dispatcher=$dispatcher," +
     s"commitTimeWarning=${commitTimeWarning.toCoarsest}," +
     s"waitClosePartition=${waitClosePartition.toCoarsest}," +
-    s"metadataRequestTimeout=${metadataRequestTimeout.toCoarsest}" +
+    s"metadataRequestTimeout=${metadataRequestTimeout.toCoarsest}," +
+    s"rebalanceFlushTimeout=${rebalanceFlushTimeout.toCoarsest}" +
     ")"
 }
