@@ -9,10 +9,12 @@ import akka.actor.{ActorRef, ExtendedActorSystem, Terminated}
 import akka.annotation.InternalApi
 import akka.kafka.Subscriptions._
 import akka.kafka._
+import akka.pattern.ask
 import akka.stream.{ActorMaterializerHelper, SourceShape}
 import org.apache.kafka.common.TopicPartition
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.duration._
+import scala.concurrent.{Await, Future, Promise}
 
 /**
  * Internal API.

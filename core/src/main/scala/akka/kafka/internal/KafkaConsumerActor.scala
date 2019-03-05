@@ -5,32 +5,26 @@
 
 package akka.kafka.internal
 
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.LockSupport
 import java.util.regex.Pattern
 
 import akka.Done
 import akka.actor.Status.Failure
-import akka.actor.{
-  Actor,
-  ActorLogging,
-  ActorRef,
-  DeadLetterSuppression,
-  NoSerializationVerificationNeeded,
-  Status,
-  Terminated,
-  Timers
-}
+import akka.actor.{Actor, ActorLogging, ActorRef, DeadLetterSuppression, NoSerializationVerificationNeeded, Status, Terminated, Timers}
 import akka.annotation.InternalApi
 import akka.util.JavaDurationConverters._
 import akka.event.LoggingReceive
 import akka.kafka.KafkaConsumerActor.StoppingException
 import akka.kafka._
 import akka.stream.stage.AsyncCallback
+import akka.util.Timeout
 import org.apache.kafka.clients.consumer._
 import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
 
 import scala.collection.JavaConverters._
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -97,7 +91,9 @@ import scala.util.control.NonFatal
 
   }
 
-  final case class ListenerCallbacks(onAssign: Set[TopicPartition] => Unit, onRevoke: Set[TopicPartition] => Unit)
+  final case class ListenerCallbacks(onAssign: Set[TopicPartition] => Unit,
+                                     onRevoke: Set[TopicPartition] => Unit,
+                                     onRevokeBlocker: Set[TopicPartition] => Future[_])
       extends NoSerializationVerificationNeeded
 
   object ListenerCallbacks {
@@ -120,6 +116,15 @@ import scala.util.control.NonFatal
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)
           }
+        },
+        revokedTps => {
+          subscription.synchronousRebalanceListener.map {
+            actor => {
+              import akka.pattern.ask
+              val f = actor.ask(TopicPartitionsRevoked(subscription, revokedTps))(Timeout(5.seconds), sourceActor)
+              f
+            }
+          }.getOrElse(Future.successful(()))
         }
       )
     }
@@ -138,6 +143,7 @@ import scala.util.control.NonFatal
   private final class WrappedAutoPausedListener(consumer: Consumer[_, _],
                                                 consumerActor: ActorRef,
                                                 positionTimeout: java.time.Duration,
+                                                blockingTimeout: java.time.Duration,
                                                 listener: ListenerCallbacks)
       extends ConsumerRebalanceListener
       with NoSerializationVerificationNeeded {
@@ -152,6 +158,7 @@ import scala.util.control.NonFatal
 
     override def onPartitionsRevoked(partitions: java.util.Collection[TopicPartition]): Unit = {
       val revokedTps = partitions.asScala.toSet
+      Await.ready(listener.onRevokeBlocker(revokedTps), Duration(blockingTimeout.getNano, TimeUnit.NANOSECONDS))
       listener.onRevoke(revokedTps)
       consumerActor ! PartitionRevoked(revokedTps)
     }
@@ -182,6 +189,9 @@ import scala.util.control.NonFatal
 
   /** Limits the blocking on position in [[WrappedAutoPausedListener]] */
   private val positionTimeout = settings.getPositionTimeout
+
+  // TODO
+  private val rebalanceBlockingTimeout = settings.getCloseTimeout
 
   private var requests = Map.empty[ActorRef, RequestMessages]
   private var requestors = Set.empty[ActorRef]
@@ -308,10 +318,12 @@ import scala.util.control.NonFatal
     subscription match {
       case Subscribe(topics, listener) =>
         consumer.subscribe(topics.toList.asJava,
-                           new WrappedAutoPausedListener(consumer, self, positionTimeout, listener))
+                           new WrappedAutoPausedListener(consumer, self, positionTimeout, rebalanceBlockingTimeout,
+                             listener))
       case SubscribePattern(pattern, listener) =>
         consumer.subscribe(Pattern.compile(pattern),
-                           new WrappedAutoPausedListener(consumer, self, positionTimeout, listener))
+                           new WrappedAutoPausedListener(consumer, self, positionTimeout, rebalanceBlockingTimeout,
+                             listener))
     }
   }
 
