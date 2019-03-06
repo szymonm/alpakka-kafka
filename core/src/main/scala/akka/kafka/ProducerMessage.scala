@@ -177,6 +177,7 @@ object ProducerMessage {
    */
   sealed trait Results[K, V, PassThrough] {
     def passThrough: PassThrough
+    def msg: Message[K, V, PassThrough]
   }
 
   /**
@@ -191,6 +192,7 @@ object ProducerMessage {
   ) extends Results[K, V, PassThrough] {
     def offset: Long = metadata.offset()
     def passThrough: PassThrough = message.passThrough
+    def msg: Message[K, V, PassThrough] = message
   }
 
   final case class MultiResultPart[K, V] private (
@@ -212,6 +214,8 @@ object ProducerMessage {
      * accessor for `parts`
      */
     def getParts(): java.util.Collection[MultiResultPart[K, V]] = parts.asJavaCollection
+
+    override def msg: Message[K, V, PassThrough] = null
   }
 
   /**
@@ -219,6 +223,8 @@ object ProducerMessage {
    * through the flow.
    */
   final case class PassThroughResult[K, V, PassThrough] private (passThrough: PassThrough)
-      extends Results[K, V, PassThrough]
+      extends Results[K, V, PassThrough] {
+    override def msg: Message[K, V, PassThrough] = null
+  }
 
 }

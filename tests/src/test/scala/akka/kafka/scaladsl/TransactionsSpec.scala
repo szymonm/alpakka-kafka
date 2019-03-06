@@ -5,7 +5,10 @@
 
 package akka.kafka.scaladsl
 
+import java.util.concurrent.atomic.AtomicLong
+
 import akka.Done
+import akka.actor.{Actor, ActorLogging, Props}
 import akka.kafka.ConsumerMessage.PartitionOffset
 import akka.kafka.Subscriptions.TopicSubscription
 import akka.kafka._
@@ -309,5 +312,107 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
       val futures: Seq[Future[Done]] = controls.map(_.shutdown())
       Await.result(Future.sequence(futures), remainingOrDefault)
     }
+  }
+
+  "provide consistency when partitions are rebalanced with draining in rebalance listener" in {
+    val sourceTopic = createTopicName(1)
+    val sinkTopic = createTopicName(2)
+    val group = createGroupId(1)
+
+    givenInitializedTopic(sourceTopic)
+    givenInitializedTopic(sinkTopic)
+
+    val elements = 10000 // 100000
+    val batchSize = 1000
+    Await.result(produce(sourceTopic, 1 to elements), remainingOrDefault)
+
+    class RebalanceDrainingListener(val id: String, val inputCounter: AtomicLong, val outputCounter: AtomicLong)
+        extends Actor
+        with ActorLogging {
+      def receive: Receive = {
+        case TopicPartitionsAssigned(_, topicPartitions) =>
+          log.info(s"streamId: $id Assigned: {}", topicPartitions)
+          var input = inputCounter.get()
+          var output = outputCounter.get()
+          log.info(s"streamId: $id upon assignment - input: $input output: $output")
+          sender ! Done
+
+        case TopicPartitionsRevoked(_, topicPartitions) =>
+          log.info(s"streamId: $id Revoked: {}", topicPartitions)
+          var input = inputCounter.get()
+          var output = outputCounter.get()
+          log.info(s"streamId: $id draining stream - input: $input output: $output")
+          while (input != output) {
+            input = inputCounter.get()
+            output = outputCounter.get()
+          }
+          sender ! Done
+      }
+    }
+
+    val consumerSettings = consumerDefaults
+      .withGroupId(group)
+      .withProperties(ConsumerConfig.ISOLATION_LEVEL_CONFIG -> "read_committed")
+
+    def runStream(id: String): Consumer.Control = {
+      val inputCounter = new AtomicLong(0)
+      val outputCounter = new AtomicLong(0)
+      val rebalanceListener = system.actorOf(Props(new RebalanceDrainingListener(id, inputCounter, outputCounter)))
+      val subscription = TopicSubscription(Set(sourceTopic), None)
+        .withRebalanceListener(rebalanceListener)
+
+      val control: Control = Transactional
+        .source(consumerSettings, subscription)
+        .filterNot(_.record.value() == InitialMsg)
+        .map { element =>
+          val input = inputCounter.incrementAndGet()
+
+          log.info(
+            s"streamId: $id inputCounter: $input"
+            ++ s" (offset: ${element.partitionOffset.offset} messageValue: ${element.record.value()})"
+          )
+          element
+        }
+        .take(batchSize)
+        .map { msg =>
+          ProducerMessage.single(new ProducerRecord[String, String](sinkTopic, msg.record.value()), msg.partitionOffset)
+        }
+        .via(Transactional.flow(producerDefaults, s"$group-$id"))
+        .map { element =>
+          val output = outputCounter.incrementAndGet()
+          log.info(s"streamId: $id outputCounter: $output (messageValue: ${element.msg.record.value()})")
+          element
+        }
+        .toMat(Sink.ignore)(Keep.left)
+        .run()
+      control
+    }
+
+    val controls: Seq[Control] = (0 until elements / batchSize).map { x =>
+      {
+        sleep(100.milliseconds)
+        runStream(x.toString)
+      }
+    }
+
+    val probeConsumerGroup = createGroupId(2)
+    val probeConsumerSettings = consumerDefaults
+      .withGroupId(probeConsumerGroup)
+      .withProperties(ConsumerConfig.ISOLATION_LEVEL_CONFIG -> "read_committed")
+
+    val probeConsumer = Consumer
+      .plainSource(probeConsumerSettings, TopicSubscription(Set(sinkTopic), None))
+      .filterNot(_.value == InitialMsg)
+      .map(_.value())
+      .runWith(TestSink.probe)
+
+    probeConsumer
+      .request(elements)
+      .expectNextUnorderedN((1 to elements).map(_.toString))
+
+    probeConsumer.cancel()
+
+    val futures: Seq[Future[Done]] = controls.map(_.shutdown())
+    Await.result(Future.sequence(futures), remainingOrDefault)
   }
 }
