@@ -38,8 +38,17 @@ sealed trait AutoSubscription extends Subscription {
   /** ActorRef which is to receive [[akka.kafka.ConsumerRebalanceEvent]] signals when rebalancing happens */
   def rebalanceListener: Option[ActorRef]
 
+
+  /** ActorRef which is to receive [[akka.kafka.ConsumerRebalanceEvent]] signals when rebalancing happens.
+    * Consumer will wait for the response from the listener.
+    */
+  def synchronousRebalanceListener: Option[ActorRef]
+
   /** Configure this actor ref to receive [[akka.kafka.ConsumerRebalanceEvent]] signals */
   def withRebalanceListener(ref: ActorRef): AutoSubscription
+
+  /** Configure this actor ref to receive synchronous [[akka.kafka.ConsumerRebalanceEvent]] signals */
+  def withSynchronousRebalanceListener(ref: ActorRef): AutoSubscription
 
   override protected def renderListener: String =
     rebalanceListener match {
@@ -58,19 +67,25 @@ object Subscriptions {
 
   /** INTERNAL API */
   @akka.annotation.InternalApi
-  private[kafka] final case class TopicSubscription(tps: Set[String], rebalanceListener: Option[ActorRef])
+  private[kafka] final case class TopicSubscription(tps: Set[String], rebalanceListener: Option[ActorRef],
+                                                    synchronousRebalanceListener: Option[ActorRef])
       extends AutoSubscription {
     def withRebalanceListener(ref: ActorRef): TopicSubscription =
-      TopicSubscription(tps, Some(ref))
+      TopicSubscription(tps, Some(ref), synchronousRebalanceListener)
+    def withSynchronousRebalanceListener(ref: ActorRef): TopicSubscription =
+      TopicSubscription(tps, rebalanceListener, Some(ref))
     def renderStageAttribute: String = s"${tps.mkString(" ")}$renderListener"
   }
 
   /** INTERNAL API */
   @akka.annotation.InternalApi
-  private[kafka] final case class TopicSubscriptionPattern(pattern: String, rebalanceListener: Option[ActorRef])
+  private[kafka] final case class TopicSubscriptionPattern(pattern: String, rebalanceListener: Option[ActorRef],
+                                                           synchronousRebalanceListener: Option[ActorRef])
       extends AutoSubscription {
     def withRebalanceListener(ref: ActorRef): TopicSubscriptionPattern =
-      TopicSubscriptionPattern(pattern, Some(ref))
+      TopicSubscriptionPattern(pattern, Some(ref), synchronousRebalanceListener)
+    def withSynchronousRebalanceListener(ref: ActorRef): TopicSubscriptionPattern =
+      TopicSubscriptionPattern(pattern, rebalanceListener, Some(ref))
     def renderStageAttribute: String = s"pattern $pattern$renderListener"
   }
 
@@ -99,7 +114,7 @@ object Subscriptions {
   }
 
   /** Creates subscription for given set of topics */
-  def topics(ts: Set[String]): AutoSubscription = TopicSubscription(ts, None)
+  def topics(ts: Set[String]): AutoSubscription = TopicSubscription(ts, None, None)
 
   /**
    * JAVA API
@@ -117,7 +132,7 @@ object Subscriptions {
   /**
    * Creates subscription for given topics pattern
    */
-  def topicPattern(pattern: String): AutoSubscription = TopicSubscriptionPattern(pattern, None)
+  def topicPattern(pattern: String): AutoSubscription = TopicSubscriptionPattern(pattern, None, None)
 
   /**
    * Manually assign given topics and partitions
