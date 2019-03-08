@@ -158,8 +158,9 @@ import scala.util.control.NonFatal
 
     override def onPartitionsRevoked(partitions: java.util.Collection[TopicPartition]): Unit = {
       val revokedTps = partitions.asScala.toSet
-      Await.ready(listener.onRevokeBlocker(revokedTps), Duration(blockingTimeout.getNano, TimeUnit.NANOSECONDS))
+      Await.ready(listener.onRevokeBlocker(revokedTps), Duration(30000, TimeUnit.SECONDS))
       listener.onRevoke(revokedTps)
+      consumer.pause(partitions)
       consumerActor ! PartitionRevoked(revokedTps)
     }
   }
