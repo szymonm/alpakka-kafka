@@ -68,7 +68,7 @@ object Subscriptions {
   /** INTERNAL API */
   @akka.annotation.InternalApi
   private[kafka] final case class TopicSubscription(tps: Set[String], rebalanceListener: Option[ActorRef],
-                                                    synchronousRebalanceListener: Option[ActorRef])
+                                                    synchronousRebalanceListener: Option[ActorRef] = None)
       extends AutoSubscription {
     def withRebalanceListener(ref: ActorRef): TopicSubscription =
       TopicSubscription(tps, Some(ref), synchronousRebalanceListener)
