@@ -12,7 +12,7 @@ import akka.kafka.internal.ProducerStage.{MessageCallback, ProducerCompletionSta
 import akka.stream.{Attributes, FlowShape}
 import akka.stream.stage._
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
-import org.apache.kafka.clients.producer.Producer
+import org.apache.kafka.clients.producer.{Producer, RecordMetadata}
 import org.apache.kafka.common.TopicPartition
 
 import scala.concurrent.Future
@@ -144,11 +144,12 @@ private final class TransactionalProducerStageLogic[K, V, P](stage: Transactiona
     }
   }
 
-  override val onMessageAckCb: AsyncCallback[Envelope[K, V, P]] =
-    getAsyncCallback[Envelope[K, V, P]](_.passThrough match {
-      case o: ConsumerMessage.PartitionOffset => batchOffsets = batchOffsets.updated(o)
+  override def onMessageAckCb(recordMetadata: RecordMetadata, env: Envelope[K, V, P]) =
+    env.passThrough match {
+      case o: ConsumerMessage.PartitionOffset =>
+        batchOffsets = batchOffsets.updated(o)
       case _ =>
-    })
+    }
 
   override def onCompletionSuccess(): Unit = {
     log.debug("Committing final transaction before shutdown")

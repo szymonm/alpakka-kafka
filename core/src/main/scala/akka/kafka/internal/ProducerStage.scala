@@ -11,7 +11,7 @@ import akka.annotation.InternalApi
 import akka.kafka.ProducerMessage._
 import akka.stream._
 import akka.stream.stage._
-import org.apache.kafka.clients.producer.Producer
+import org.apache.kafka.clients.producer.{Producer, RecordMetadata}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -45,6 +45,6 @@ private object ProducerStage {
 
   trait MessageCallback[K, V, P] {
     protected def awaitingConfirmation: AtomicInteger
-    def onMessageAckCb: AsyncCallback[Envelope[K, V, P]]
+    def onMessageAckCb(metadata: RecordMetadata, env: Envelope[K, V, P]): Unit
   }
 }

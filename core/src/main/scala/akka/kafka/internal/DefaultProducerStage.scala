@@ -80,8 +80,7 @@ private class DefaultProducerStageLogic[K, V, P, IN <: Envelope[K, V, P], OUT <:
     failStage(ex)
   }
 
-  override val onMessageAckCb: AsyncCallback[Envelope[K, V, P]] = getAsyncCallback[Envelope[K, V, P]] { _ =>
-    }
+  override def onMessageAckCb(metadata: RecordMetadata, env: Envelope[K, V, P]): Unit = {}
 
   setHandler(stage.out, new OutHandler {
     override def onPull(): Unit = tryPull(stage.in)
@@ -112,7 +111,7 @@ private class DefaultProducerStageLogic[K, V, P, IN <: Envelope[K, V, P], OUT <:
         val r = Promise[Result[K, V, P]]
         awaitingConfirmation.incrementAndGet()
         producer.send(msg.record, sendCallback(r, onSuccess = metadata => {
-          onMessageAckCb.invoke(msg)
+          onMessageAckCb(metadata, msg)
           r.success(Result(metadata, msg))
         }))
         val future = r.future.asInstanceOf[Future[OUT]]
@@ -129,14 +128,14 @@ private class DefaultProducerStageLogic[K, V, P, IN <: Envelope[K, V, P], OUT <:
         }
         implicit val ec: ExecutionContext = this.materializer.executionContext
         val res = Future.sequence(promises).map { parts =>
-          onMessageAckCb.invoke(multiMsg)
+          onMessageAckCb(null, multiMsg)
           MultiResult(parts, multiMsg.passThrough)
         }
         val future = res.asInstanceOf[Future[OUT]]
         push(stage.out, future)
 
       case _: PassThroughMessage[K, V, P] =>
-        onMessageAckCb.invoke(in)
+        onMessageAckCb(null, in)
         val future = Future.successful(PassThroughResult[K, V, P](in.passThrough)).asInstanceOf[Future[OUT]]
         push(stage.out, future)
 
