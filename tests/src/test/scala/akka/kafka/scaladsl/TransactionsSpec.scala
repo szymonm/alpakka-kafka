@@ -6,16 +6,19 @@
 package akka.kafka.scaladsl
 
 import akka.Done
+import akka.actor.{Actor, ActorLogging, Props}
 import akka.kafka.ConsumerMessage.PartitionOffset
 import akka.kafka.Subscriptions.TopicSubscription
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.Control
+import akka.stream.Attributes
 import akka.stream.scaladsl.{Keep, RestartSource, Sink}
 import akka.stream.testkit.scaladsl.StreamTestKit.assertAllStagesStopped
 import akka.stream.testkit.scaladsl.TestSink
 import net.manub.embeddedkafka.EmbeddedKafkaConfig
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.apache.kafka.common.requests.IsolationLevel
 
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
@@ -262,21 +265,37 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
       givenInitializedTopic(sourceTopic)
       givenInitializedTopic(sinkTopic)
 
-      val elements = 100000
-      val batchSize = 1000
+      val elements = 3000
+      val batchSize = 100
       Await.result(produce(sourceTopic, 1 to elements), remainingOrDefault)
 
       val consumerSettings = consumerDefaults.withGroupId(group)
 
+      class RebalanceListener extends Actor with ActorLogging {
+        def receive: Receive = {
+          case TopicPartitionsAssigned(subscription, topicPartitions) =>
+            log.info("Assigned: {}", topicPartitions)
+            sender ! Done
+
+          case TopicPartitionsRevoked(subscription, topicPartitions) =>
+            log.info("Revoked: {}", topicPartitions)
+            sender ! Done
+        }
+      }
+
+      val rebalanceListener = system.actorOf(Props(new RebalanceListener))
+
       def runStream(id: String): Consumer.Control = {
         val control: Control = Transactional
-          .source(consumerSettings, TopicSubscription(Set(sourceTopic), None))
+          .source(consumerSettings, TopicSubscription(Set(sourceTopic), None, Some(rebalanceListener)))
           .filterNot(_.record.value() == InitialMsg)
           .take(batchSize)
           .map { msg =>
             ProducerMessage.single(new ProducerRecord[String, String](sinkTopic, msg.record.value), msg.partitionOffset)
           }
           .via(Transactional.flow(producerDefaults, s"$group-$id"))
+          .log("end", x => x.passThrough.offset)
+          .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info))
           .toMat(Sink.ignore)(Keep.left)
           .run()
         control
@@ -284,7 +303,7 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
 
       val controls: Seq[Control] = (0 until elements / batchSize).map { x =>
         {
-          Thread.sleep(100)
+          Thread.sleep(1000)
           runStream(x.toString)
         }
       }
@@ -292,17 +311,22 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
       val probeConsumerGroup = createGroupId(2)
       val probeConsumerSettings = consumerDefaults
         .withGroupId(probeConsumerGroup)
-        .withProperties(ConsumerConfig.ISOLATION_LEVEL_CONFIG -> "read_committed")
+        .withProperties(ConsumerConfig.ISOLATION_LEVEL_CONFIG -> IsolationLevel.READ_COMMITTED.toString.toLowerCase)
+
+      Thread.sleep(2000)
 
       val probeConsumer = Consumer
         .plainSource(probeConsumerSettings, TopicSubscription(Set(sinkTopic), None))
         .filterNot(_.value == InitialMsg)
         .map(_.value())
+        .log("probe", identity)
+        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info))
         .runWith(TestSink.probe)
 
       probeConsumer
         .request(elements)
         .expectNextUnorderedN((1 to elements).map(_.toString))
+
 
       probeConsumer.cancel()
 
