@@ -24,7 +24,7 @@ import org.apache.kafka.common.TopicPartition
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success}
 
 /**
@@ -91,8 +91,12 @@ private abstract class SubSourceLogic[K, V, Msg](
           }
         },
         revokedTps => {
-          subscription.rebalanceListener.foreach {
-            _.tell(TopicPartitionsRevoked(subscription, revokedTps), sourceActor.ref)
+          subscription.rebalanceListener.foreach { rebalanceListenerActor =>
+            val revokeMessage = TopicPartitionsRevoked(subscription, revokedTps)
+            val revokedCallbackFuture =
+              rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+
+            Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
           }
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)
