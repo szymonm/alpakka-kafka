@@ -8,6 +8,7 @@ package akka.kafka.scaladsl
 import java.util.concurrent.ConcurrentLinkedQueue
 
 import akka.Done
+import akka.actor.ActorRef
 import akka.kafka.ConsumerMessage.CommittableOffsetBatch
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.DrainingControl
@@ -16,7 +17,7 @@ import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.{Keep, Sink, Source}
 import akka.stream.testkit.scaladsl.StreamTestKit.assertAllStagesStopped
 import akka.stream.testkit.scaladsl.TestSink
-import akka.testkit.TestProbe
+import akka.testkit.{TestActor, TestProbe}
 import akka.util.Timeout
 import net.manub.embeddedkafka.EmbeddedKafkaConfig
 import org.apache.kafka.clients.consumer.ConsumerConfig
@@ -145,7 +146,24 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
         .withGroupId(group)
 
       val rebalanceActor1 = TestProbe()
+      rebalanceActor1.setAutoPilot((sender: ActorRef, msg: Any) => {
+        msg match {
+          case TopicPartitionsRevoked(_, _) =>
+            sender ! Done
+          case _ => ()
+        }
+        TestActor.KeepRunning
+      })
+
       val rebalanceActor2 = TestProbe()
+      rebalanceActor2.setAutoPilot((sender: ActorRef, msg: Any) => {
+        msg match {
+          case TopicPartitionsRevoked(_, _) =>
+            sender ! Done
+          case _ => ()
+        }
+        TestActor.KeepRunning
+      })
 
       val (counterQueue, counterCompletion) = Source
         .queue[String](8, OverflowStrategy.fail)

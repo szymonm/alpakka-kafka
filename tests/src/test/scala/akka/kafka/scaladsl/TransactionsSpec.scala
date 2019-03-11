@@ -282,8 +282,8 @@ class TransactionsSpec extends SpecBase(kafkaPort = KafkaPorts.TransactionsSpec)
         control
       }
 
-      val controls: Seq[Control] = (0 until elements / batchSize).map {
-        x => {
+      val controls: Seq[Control] = (0 until elements / batchSize).map { x =>
+        {
           runStream(x.toString)
         }
       }

@@ -8,13 +8,14 @@ package akka.kafka.scaladsl
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
 import akka.Done
+import akka.actor.ActorRef
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.DrainingControl
 import akka.stream.{KillSwitches, OverflowStrategy}
 import akka.stream.scaladsl.{Keep, Sink, Source}
 import akka.stream.testkit.scaladsl.StreamTestKit.assertAllStagesStopped
 import akka.stream.testkit.scaladsl.TestSink
-import akka.testkit.TestProbe
+import akka.testkit.{TestActor, TestProbe}
 import net.manub.embeddedkafka.EmbeddedKafkaConfig
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.producer.ProducerRecord
@@ -249,6 +250,14 @@ class PartitionedSourcesSpec
         .withGroupId(group)
 
       val rebalanceActor = TestProbe()
+      rebalanceActor.setAutoPilot((sender: ActorRef, msg: Any) => {
+        msg match {
+          case TopicPartitionsRevoked(_, _) =>
+            sender ! Done
+          case _ => ()
+        }
+        TestActor.KeepRunning
+      })
 
       val topicSubscription = Subscriptions.topics(topic)
       val subscription1 = topicSubscription.withRebalanceListener(rebalanceActor.ref)

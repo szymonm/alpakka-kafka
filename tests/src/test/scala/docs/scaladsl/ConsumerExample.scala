@@ -334,16 +334,17 @@ class ConsumerExample extends DocsSpecBase(KafkaPorts.ScalaConsumerExamples) {
 
     class RebalanceListener extends Actor with ActorLogging {
       def receive: Receive = {
-        case TopicPartitionsAssigned(subscription, topicPartitions) =>
+        case TopicPartitionsAssigned(_, topicPartitions) =>
           log.info("Assigned: {}", topicPartitions)
           //#withRebalanceListenerActor
           assignedPromise.success(Done)
     //#withRebalanceListenerActor
 
-        case TopicPartitionsRevoked(subscription, topicPartitions) =>
+        case TopicPartitionsRevoked(_, topicPartitions) =>
           log.info("Revoked: {}", topicPartitions)
           //#withRebalanceListenerActor
           revokedPromise.success(Done)
+          sender() ! Done
     //#withRebalanceListenerActor
       }
     }

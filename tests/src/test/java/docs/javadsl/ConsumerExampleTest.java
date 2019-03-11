@@ -433,6 +433,7 @@ class ConsumerExampleTest extends EmbeddedKafkaTest {
               TopicPartitionsRevoked.class,
               revoked -> {
                 log().info("Revoked: {}", revoked);
+                getSender().tell(Done.done(), getSelf());
               })
           .build();
     }
