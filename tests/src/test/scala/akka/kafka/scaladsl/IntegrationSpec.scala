@@ -6,9 +6,10 @@
 package akka.kafka.scaladsl
 
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 import akka.Done
-import akka.actor.ActorRef
+import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.kafka.ConsumerMessage.CommittableOffsetBatch
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.DrainingControl
@@ -28,8 +29,8 @@ import org.scalatest._
 import scala.collection.JavaConverters._
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.{Await, Future}
-import scala.util.Success
+import scala.concurrent.{Await, Future, Promise}
+import scala.util.{Failure, Success}
 
 class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) with Inside {
 
@@ -224,6 +225,68 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
       val stream1messages = control.drainAndShutdown().futureValue
       val stream2messages = control2.drainAndShutdown().futureValue
       stream1messages + stream2messages shouldBe totalMessages
+    }
+
+    "fail the stream on rebalnce timeout" in assertAllStagesStopped {
+      val partitions = 4
+      val totalMessages = 200L
+      val revokedPromise = Promise[Done]
+
+      val topic = createTopic(1, partitions)
+      val group = createGroupId(1)
+      val sourceSettings = consumerDefaults
+        .withProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+        .withGroupId(group)
+      val answerTrigger = new AtomicBoolean(true)
+
+      class RebalanceListener(answerTrigger: AtomicBoolean) extends Actor with ActorLogging {
+        def receive: Receive = {
+          case TopicPartitionsAssigned(_, topicPartitions) =>
+            log.info("Assigned: {}", topicPartitions)
+
+          case TopicPartitionsRevoked(_, topicPartitions) =>
+            log.info("Revoked: {}", topicPartitions)
+            revokedPromise.success(Done)
+            if (answerTrigger.get) {
+              sender() ! Done
+            }
+        }
+      }
+      val rebalanceActor1 = system.actorOf(Props(new RebalanceListener(answerTrigger)))
+
+      val topicSubscription = Subscriptions.topics(topic)
+      val subscription1 = topicSubscription.withRebalanceListener(rebalanceActor1)
+
+
+      def createAndRunConsumer(subscription: Subscription) =
+        Consumer
+          .plainSource(sourceSettings, subscription)
+          .scan(0L)((c, _) => c + 1)
+          .toMat(Sink.last)(Keep.both)
+          .mapMaterializedValue(DrainingControl.apply)
+          .run()
+
+      def createAndRunProducer(elements: immutable.Iterable[Long]) =
+        Source(elements)
+          .map(n => new ProducerRecord(topic, (n % partitions).toInt, DefaultKey, n.toString))
+          .runWith(Producer.plainSink(producerDefaults, testProducer))
+
+      val control = createAndRunConsumer(subscription1)
+
+      // waits until all partitions are assigned to the single consumer
+      waitUntilConsumerSummary(group, timeout = 5.seconds) {
+        case singleConsumer :: Nil => singleConsumer.assignment.topicPartitions.size == partitions
+      }
+
+      answerTrigger.set(false)
+      createAndRunProducer(0L until totalMessages / 2).futureValue
+      // create another consumer with the same groupId to trigger re-balancing
+      val control2 = createAndRunConsumer(topicSubscription)
+
+      revokedPromise.future.futureValue should be(Done)
+
+      control.isShutdown.futureValue shouldBe Done
+      control2.drainAndShutdown().futureValue
     }
 
     "handle commit without demand" in assertAllStagesStopped {
