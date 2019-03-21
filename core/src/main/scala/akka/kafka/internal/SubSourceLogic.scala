@@ -12,7 +12,7 @@ import akka.annotation.InternalApi
 import akka.kafka.Subscriptions.{TopicSubscription, TopicSubscriptionPattern}
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.Control
-import akka.pattern.{ask, AskTimeoutException}
+import akka.pattern.{AskTimeoutException, ask}
 import akka.stream.scaladsl.Source
 import akka.stream.stage.GraphStageLogic.StageActor
 import akka.stream.stage.{StageLogging, _}
@@ -20,11 +20,12 @@ import akka.stream.{ActorMaterializerHelper, Attributes, Outlet, SourceShape}
 import akka.util.Timeout
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.WakeupException
 
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.concurrent._
 import scala.util.{Failure, Success}
 
 /**
@@ -96,7 +97,14 @@ private abstract class SubSourceLogic[K, V, Msg](
             val revokedCallbackFuture =
               rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
 
-            Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+            try {
+              Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+            } catch  {
+              case te: TimeoutException =>
+                // WARNING: An awful hack to make stream fail on timeout here
+                log.error(te, "Partitions revoked handler timed out")
+                throw new WakeupException()
+            }
           }
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)
