@@ -63,7 +63,7 @@ import scala.concurrent.{Await, Future, Promise, TimeoutException}
               rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
             try {
               Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
-            } catch  {
+            } catch {
               case te: TimeoutException =>
                 // WARNING: An awful hack to make stream fail on timeout here
                 log.error(te, "Partitions revoked handler timed out")

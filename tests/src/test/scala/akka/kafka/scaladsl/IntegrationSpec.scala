@@ -5,7 +5,6 @@
 
 package akka.kafka.scaladsl
 
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 import akka.Done
@@ -26,11 +25,10 @@ import org.apache.kafka.clients.producer.{ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
 import org.scalatest._
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future, Promise}
-import scala.util.{Failure, Success}
+import scala.util.{ Success}
 
 class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) with Inside {
 
@@ -61,78 +59,6 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
 
         probe.cancel()
       }
-    }
-
-    "resume consumer from committed offset" in assertAllStagesStopped {
-      val topic1 = createTopicName(1)
-      val group1 = createGroupId(1)
-      val group2 = createGroupId(2)
-
-      givenInitializedTopic(topic1)
-
-      // NOTE: If no partition is specified but a key is present a partition will be chosen
-      // using a hash of the key. If neither key nor partition is present a partition
-      // will be assigned in a round-robin fashion.
-
-      Source(1 to 100)
-        .map(n => new ProducerRecord(topic1, partition0, DefaultKey, n.toString))
-        .runWith(Producer.plainSink(producerDefaults))
-
-      val committedElements = new ConcurrentLinkedQueue[Int]()
-
-      val consumerSettings = consumerDefaults.withGroupId(group1)
-
-      val (control, probe1) = Consumer
-        .committableSource(consumerSettings, Subscriptions.topics(topic1))
-        .filterNot(_.record.value == InitialMsg)
-        .mapAsync(10) { elem =>
-          elem.committableOffset.commitScaladsl().map { _ =>
-            committedElements.add(elem.record.value.toInt)
-            Done
-          }
-        }
-        .toMat(TestSink.probe)(Keep.both)
-        .run()
-
-      probe1
-        .request(25)
-        .expectNextN(25)
-        .toSet should be(Set(Done))
-
-      probe1.cancel()
-      Await.result(control.isShutdown, remainingOrDefault)
-
-      val probe2 = Consumer
-        .committableSource(consumerSettings, Subscriptions.topics(topic1))
-        .map(_.record.value)
-        .runWith(TestSink.probe)
-
-      // Note that due to buffers and mapAsync(10) the committed offset is more
-      // than 26, and that is not wrong
-
-      // some concurrent publish
-      Source(101 to 200)
-        .map(n => new ProducerRecord(topic1, partition0, DefaultKey, n.toString))
-        .runWith(Producer.plainSink(producerDefaults))
-
-      probe2
-        .request(100)
-        .expectNextN(((committedElements.asScala.max + 1) to 100).map(_.toString))
-
-      probe2.cancel()
-
-      // another consumer should see all
-      val probe3 = Consumer
-        .committableSource(consumerSettings.withGroupId(group2), Subscriptions.topics(topic1))
-        .filterNot(_.record.value == InitialMsg)
-        .map(_.record.value)
-        .runWith(TestSink.probe)
-
-      probe3
-        .request(100)
-        .expectNextN((1 to 100).map(_.toString))
-
-      probe3.cancel()
     }
 
     "signal rebalance events to actor" in assertAllStagesStopped {
@@ -226,6 +152,7 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
       val stream2messages = control2.drainAndShutdown().futureValue
       stream1messages + stream2messages shouldBe totalMessages
     }
+
 
     "fail the stream on rebalnce timeout" in assertAllStagesStopped {
       val partitions = 4
