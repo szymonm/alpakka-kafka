@@ -57,18 +57,19 @@ import scala.concurrent.{Await, Future, Promise, TimeoutException}
           }
         },
         revokedTps => {
-          autoSubscription.rebalanceListener.foreach { rebalanceListenerActor =>
-            val revokeMessage = TopicPartitionsRevoked(autoSubscription, revokedTps)
-            val revokedCallbackFuture =
-              rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
-            try {
-              Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
-            } catch {
-              case te: TimeoutException =>
-                // WARNING: An awful hack to make stream fail on timeout here
-                log.error(te, "Partitions revoked handler timed out")
-                throw new WakeupException()
-            }
+          autoSubscription.rebalanceListener.foreach {
+            rebalanceListenerActor =>
+              val revokeMessage = TopicPartitionsRevoked(autoSubscription, revokedTps)
+              val revokedCallbackFuture =
+                rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+              try {
+                Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+              } catch {
+                case te: TimeoutException =>
+                  // WARNING: An awful hack to make stream fail on timeout here
+                  log.error(te, "Partitions revoked handler timed out")
+                  throw new WakeupException()
+              }
           }
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)

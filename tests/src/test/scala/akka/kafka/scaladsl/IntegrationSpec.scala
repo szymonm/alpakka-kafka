@@ -28,7 +28,7 @@ import org.scalatest._
 import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future, Promise}
-import scala.util.{ Success}
+import scala.util.{Success}
 
 class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) with Inside {
 
@@ -153,7 +153,6 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
       stream1messages + stream2messages shouldBe totalMessages
     }
 
-
     "fail the stream on rebalnce timeout" in assertAllStagesStopped {
       val partitions = 4
       val totalMessages = 200L
@@ -183,7 +182,6 @@ class IntegrationSpec extends SpecBase(kafkaPort = KafkaPorts.IntegrationSpec) w
 
       val topicSubscription = Subscriptions.topics(topic)
       val subscription1 = topicSubscription.withRebalanceListener(rebalanceActor1)
-
 
       def createAndRunConsumer(subscription: Subscription) =
         Consumer

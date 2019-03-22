@@ -12,7 +12,7 @@ import akka.annotation.InternalApi
 import akka.kafka.Subscriptions.{TopicSubscription, TopicSubscriptionPattern}
 import akka.kafka._
 import akka.kafka.scaladsl.Consumer.Control
-import akka.pattern.{AskTimeoutException, ask}
+import akka.pattern.{ask, AskTimeoutException}
 import akka.stream.scaladsl.Source
 import akka.stream.stage.GraphStageLogic.StageActor
 import akka.stream.stage.{StageLogging, _}
@@ -92,19 +92,20 @@ private abstract class SubSourceLogic[K, V, Msg](
           }
         },
         revokedTps => {
-          subscription.rebalanceListener.foreach { rebalanceListenerActor =>
-            val revokeMessage = TopicPartitionsRevoked(subscription, revokedTps)
-            val revokedCallbackFuture =
-              rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+          subscription.rebalanceListener.foreach {
+            rebalanceListenerActor =>
+              val revokeMessage = TopicPartitionsRevoked(subscription, revokedTps)
+              val revokedCallbackFuture =
+                rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
 
-            try {
-              Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
-            } catch  {
-              case te: TimeoutException =>
-                // WARNING: An awful hack to make stream fail on timeout here
-                log.error(te, "Partitions revoked handler timed out")
-                throw new WakeupException()
-            }
+              try {
+                Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+              } catch {
+                case te: TimeoutException =>
+                  // WARNING: An awful hack to make stream fail on timeout here
+                  log.error(te, "Partitions revoked handler timed out")
+                  throw new WakeupException()
+              }
           }
           if (revokedTps.nonEmpty) {
             partitionRevokedCB.invoke(revokedTps)
