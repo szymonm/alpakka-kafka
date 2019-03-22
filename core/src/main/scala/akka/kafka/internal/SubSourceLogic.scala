@@ -20,11 +20,12 @@ import akka.stream.{ActorMaterializerHelper, Attributes, Outlet, SourceShape}
 import akka.util.Timeout
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.WakeupException
 
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.concurrent._
 import scala.util.{Failure, Success}
 
 /**
@@ -81,7 +82,36 @@ private abstract class SubSourceLogic[K, V, Msg](
     sourceActor.watch(consumerActor)
 
     def rebalanceListener =
-      KafkaConsumerActor.ListenerCallbacks(subscription, sourceActor.ref, partitionAssignedCB, partitionRevokedCB)
+      KafkaConsumerActor.ListenerCallbacks(
+        assignedTps => {
+          subscription.rebalanceListener.foreach {
+            _.tell(TopicPartitionsAssigned(subscription, assignedTps), sourceActor.ref)
+          }
+          if (assignedTps.nonEmpty) {
+            partitionAssignedCB.invoke(assignedTps)
+          }
+        },
+        revokedTps => {
+          subscription.rebalanceListener.foreach {
+            rebalanceListenerActor =>
+              val revokeMessage = TopicPartitionsRevoked(subscription, revokedTps)
+              val revokedCallbackFuture =
+                rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+
+              try {
+                Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+              } catch {
+                case te: TimeoutException =>
+                  // WARNING: An awful hack to make stream fail on timeout here
+                  log.error(te, "Partitions revoked handler timed out")
+                  throw new WakeupException()
+              }
+          }
+          if (revokedTps.nonEmpty) {
+            partitionRevokedCB.invoke(revokedTps)
+          }
+        }
+      )
 
     subscription match {
       case TopicSubscription(topics, _) =>

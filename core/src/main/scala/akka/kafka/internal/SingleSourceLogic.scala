@@ -9,10 +9,12 @@ import akka.actor.{ActorRef, ExtendedActorSystem, Terminated}
 import akka.annotation.InternalApi
 import akka.kafka.Subscriptions._
 import akka.kafka._
+import akka.pattern.ask
 import akka.stream.{ActorMaterializerHelper, SourceShape}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.WakeupException
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.{Await, Future, Promise, TimeoutException}
 
 /**
  * Internal API.
@@ -45,7 +47,35 @@ import scala.concurrent.{Future, Promise}
         log.debug("Revoked partitions: {}. All partitions: {}", revokedTps, tps)
       }
 
-      KafkaConsumerActor.ListenerCallbacks(autoSubscription, sourceActor.ref, partitionAssignedCB, partitionRevokedCB)
+      KafkaConsumerActor.ListenerCallbacks(
+        assignedTps => {
+          autoSubscription.rebalanceListener.foreach {
+            _.tell(TopicPartitionsAssigned(autoSubscription, assignedTps), sourceActor.ref)
+          }
+          if (assignedTps.nonEmpty) {
+            partitionAssignedCB.invoke(assignedTps)
+          }
+        },
+        revokedTps => {
+          autoSubscription.rebalanceListener.foreach {
+            rebalanceListenerActor =>
+              val revokeMessage = TopicPartitionsRevoked(autoSubscription, revokedTps)
+              val revokedCallbackFuture =
+                rebalanceListenerActor.ask(revokeMessage)(settings.rebalanceFlushTimeout, sourceActor.ref)
+              try {
+                Await.result(revokedCallbackFuture, settings.rebalanceFlushTimeout)
+              } catch {
+                case te: TimeoutException =>
+                  // WARNING: An awful hack to make stream fail on timeout here
+                  log.error(te, "Partitions revoked handler timed out")
+                  throw new WakeupException()
+              }
+          }
+          if (revokedTps.nonEmpty) {
+            partitionRevokedCB.invoke(revokedTps)
+          }
+        }
+      )
     }
 
     subscription match {
